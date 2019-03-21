@@ -62,6 +62,9 @@ ID3D11Buffer *d2dIndexBuffer;
 ID3D11ShaderResourceView *d2dTexture;
 IDWriteFactory *DWriteFactory;
 IDWriteTextFormat *TextFormat;
+ID3D11Buffer* cbPerFrameBuffer;
+ID3D11PixelShader* D2D_PS;
+ID3D10Blob* D2D_PS_Buffer;
 
 std::wstring printText;
 
@@ -124,25 +127,54 @@ LRESULT CALLBACK WndProc(HWND hWnd,
 struct cbPerObject
 {
 	XMMATRIX  WVP;
+	XMMATRIX  World;
 };
 
 cbPerObject cbPerObj;
 
-struct Vertex  
+struct Light
+{
+	Light()
+	{
+		ZeroMemory(this, sizeof(Light));
+	}
+	XMFLOAT3 dir;
+	float pad1;
+	XMFLOAT3 pos;
+	float range;
+	XMFLOAT3 att;
+	float pad2;
+	XMFLOAT4 ambient;
+	XMFLOAT4 diffuse;
+};
+
+Light light;
+
+struct cbPerFrame
+{
+	Light  light;
+};
+
+cbPerFrame constbuffPerFrame;
+
+struct Vertex    //Overloaded Vertex Structure
 {
 	Vertex() {}
 	Vertex(float x, float y, float z,
-		float u, float v)
-		: pos(x, y, z), texCoord(u, v) {}
+		float u, float v,
+		float nx, float ny, float nz)
+		: pos(x, y, z), texCoord(u, v), normal(nx, ny, nz) {}
 
 	XMFLOAT3 pos;
 	XMFLOAT2 texCoord;
+	XMFLOAT3 normal;
 };
 
 D3D11_INPUT_ELEMENT_DESC layout[] =
 {
 	{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 	{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+	{ "NORMAL",     0, DXGI_FORMAT_R32G32B32_FLOAT,    0, 20, D3D11_INPUT_PER_VERTEX_DATA, 0}
 };
 
 UINT numElements = ARRAYSIZE(layout);
@@ -458,6 +490,7 @@ void CleanUp()
 	TextFormat->Release();
 	d2dTexture->Release();
 	noCull->Release();
+	cbPerFrameBuffer->Release();
 }
 
 void InitD2DScreenTexture()
@@ -465,10 +498,10 @@ void InitD2DScreenTexture()
 	Vertex v[] =
 	{
 		// Front Face
-		Vertex(-1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
-		Vertex(-1.0f,  1.0f, -1.0f, 0.0f, 0.0f),
-		Vertex(1.0f,  1.0f, -1.0f, 1.0f, 0.0f),
-		Vertex(1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
+		Vertex(-1.0f, -1.0f, -1.0f, 0.0f, 1.0f,-1.0f, -1.0f, -1.0f),
+		Vertex(-1.0f,  1.0f, -1.0f, 0.0f, 0.0f,-1.0f,  1.0f, -1.0f),
+		Vertex(1.0f,  1.0f, -1.0f, 1.0f, 0.0f, 1.0f,  1.0f, -1.0f),
+		Vertex(1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f),
 	};
 
 	DWORD indices[] = {
@@ -516,12 +549,19 @@ bool InitScene()
 
 	hr = D3DX11CompileFromFile("Effects.fx", 0, 0, "VS", "vs_5_0", 0, 0, 0, &VS_Buffer, 0, 0);
 	hr = D3DX11CompileFromFile("Effects.fx", 0, 0, "PS", "ps_5_0", 0, 0, 0, &PS_Buffer, 0, 0);
-
+	hr = D3DX11CompileFromFile("Effects.fx", 0, 0, "D2D_PS", "ps_5_0", 0, 0, 0, &D2D_PS_Buffer, 0, 0);
 	hr = d3d11Device->CreateVertexShader(VS_Buffer->GetBufferPointer(), VS_Buffer->GetBufferSize(), NULL, &VS);
 	hr = d3d11Device->CreatePixelShader(PS_Buffer->GetBufferPointer(), PS_Buffer->GetBufferSize(), NULL, &PS);
+	hr = d3d11Device->CreatePixelShader(D2D_PS_Buffer->GetBufferPointer(), D2D_PS_Buffer->GetBufferSize(), NULL, &D2D_PS);
 
 	d3d11DevCon->VSSetShader(VS, 0, 0);
 	d3d11DevCon->PSSetShader(PS, 0, 0);
+
+	light.pos = XMFLOAT3(0.0f, 0.0f, 0.0f);
+	light.range = 100.0f;
+	light.att = XMFLOAT3(0.0f, 0.2f, 0.0f);
+	light.ambient = XMFLOAT4(0.3f, 0.3f, 0.3f, 1.0f);
+	light.diffuse = XMFLOAT4(1.0f, 1.0f, 1.0f, 1.0f);
 
 	/*Vertex v[] =
 	{
@@ -536,70 +576,71 @@ bool InitScene()
 		0, 2, 3,
 	};*/
 
-	 Vertex v[] =
-        {
-            // Front Face
-            Vertex(-1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
-            Vertex(-1.0f,  1.0f, -1.0f, 0.0f, 0.0f),
-            Vertex( 1.0f,  1.0f, -1.0f, 1.0f, 0.0f),
-            Vertex( 1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
-    
-            // Back Face
-            Vertex(-1.0f, -1.0f, 1.0f, 1.0f, 1.0f),
-            Vertex( 1.0f, -1.0f, 1.0f, 0.0f, 1.0f),
-            Vertex( 1.0f,  1.0f, 1.0f, 0.0f, 0.0f),
-            Vertex(-1.0f,  1.0f, 1.0f, 1.0f, 0.0f),
-    
-            // Top Face
-            Vertex(-1.0f, 1.0f, -1.0f, 0.0f, 1.0f),
-            Vertex(-1.0f, 1.0f,  1.0f, 0.0f, 0.0f),
-            Vertex( 1.0f, 1.0f,  1.0f, 1.0f, 0.0f),
-            Vertex( 1.0f, 1.0f, -1.0f, 1.0f, 1.0f),
-    
-            // Bottom Face
-            Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
-            Vertex( 1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
-            Vertex( 1.0f, -1.0f,  1.0f, 0.0f, 0.0f),
-            Vertex(-1.0f, -1.0f,  1.0f, 1.0f, 0.0f),
-    
-            // Left Face
-            Vertex(-1.0f, -1.0f,  1.0f, 0.0f, 1.0f),
-            Vertex(-1.0f,  1.0f,  1.0f, 0.0f, 0.0f),
-            Vertex(-1.0f,  1.0f, -1.0f, 1.0f, 0.0f),
-            Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
-    
-            // Right Face
-            Vertex( 1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
-            Vertex( 1.0f,  1.0f, -1.0f, 0.0f, 0.0f),
-            Vertex( 1.0f,  1.0f,  1.0f, 1.0f, 0.0f),
-            Vertex( 1.0f, -1.0f,  1.0f, 1.0f, 1.0f),
-        };
-    
-        DWORD indices[] = {
-            // Front Face
-            0,  1,  2,
-            0,  2,  3,
-    
-            // Back Face
-            4,  5,  6,
-            4,  6,  7,
-    
-            // Top Face
-            8,  9, 10,
-            8, 10, 11,
-    
-            // Bottom Face
-            12, 13, 14,
-            12, 14, 15,
-    
-            // Left Face
-            16, 17, 18,
-            16, 18, 19,
-    
-            // Right Face
-            20, 21, 22,
-            20, 22, 23
-        };
+	Vertex v[] =
+	{
+		// Front Face
+		Vertex(-1.0f, -1.0f, -1.0f, 0.0f, 1.0f,-1.0f, -1.0f, -1.0f),
+		Vertex(-1.0f,  1.0f, -1.0f, 0.0f, 0.0f,-1.0f,  1.0f, -1.0f),
+		Vertex(1.0f,  1.0f, -1.0f, 1.0f, 0.0f, 1.0f,  1.0f, -1.0f),
+		Vertex(1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f),
+
+		// Back Face
+		Vertex(-1.0f, -1.0f, 1.0f, 1.0f, 1.0f,-1.0f, -1.0f, 1.0f),
+		Vertex(1.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, -1.0f, 1.0f),
+		Vertex(1.0f,  1.0f, 1.0f, 0.0f, 0.0f, 1.0f,  1.0f, 1.0f),
+		Vertex(-1.0f,  1.0f, 1.0f, 1.0f, 0.0f,-1.0f,  1.0f, 1.0f),
+
+		// Top Face
+		Vertex(-1.0f, 1.0f, -1.0f, 0.0f, 1.0f,-1.0f, 1.0f, -1.0f),
+		Vertex(-1.0f, 1.0f,  1.0f, 0.0f, 0.0f,-1.0f, 1.0f,  1.0f),
+		Vertex(1.0f, 1.0f,  1.0f, 1.0f, 0.0f, 1.0f, 1.0f,  1.0f),
+		Vertex(1.0f, 1.0f, -1.0f, 1.0f, 1.0f, 1.0f, 1.0f, -1.0f),
+
+		// Bottom Face
+		Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f,-1.0f, -1.0f, -1.0f),
+		Vertex(1.0f, -1.0f, -1.0f, 0.0f, 1.0f, 1.0f, -1.0f, -1.0f),
+		Vertex(1.0f, -1.0f,  1.0f, 0.0f, 0.0f, 1.0f, -1.0f,  1.0f),
+		Vertex(-1.0f, -1.0f,  1.0f, 1.0f, 0.0f,-1.0f, -1.0f,  1.0f),
+
+		// Left Face
+		Vertex(-1.0f, -1.0f,  1.0f, 0.0f, 1.0f,-1.0f, -1.0f,  1.0f),
+		Vertex(-1.0f,  1.0f,  1.0f, 0.0f, 0.0f,-1.0f,  1.0f,  1.0f),
+		Vertex(-1.0f,  1.0f, -1.0f, 1.0f, 0.0f,-1.0f,  1.0f, -1.0f),
+		Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f,-1.0f, -1.0f, -1.0f),
+
+		// Right Face
+		Vertex(1.0f, -1.0f, -1.0f, 0.0f, 1.0f, 1.0f, -1.0f, -1.0f),
+		Vertex(1.0f,  1.0f, -1.0f, 0.0f, 0.0f, 1.0f,  1.0f, -1.0f),
+		Vertex(1.0f,  1.0f,  1.0f, 1.0f, 0.0f, 1.0f,  1.0f,  1.0f),
+		Vertex(1.0f, -1.0f,  1.0f, 1.0f, 1.0f, 1.0f, -1.0f,  1.0f),
+	};
+	///////////////**************new**************////////////////////
+
+	DWORD indices[] = {
+		// Front Face
+		0,  1,  2,
+		0,  2,  3,
+
+		// Back Face
+		4,  5,  6,
+		4,  6,  7,
+
+		// Top Face
+		8,  9, 10,
+		8, 10, 11,
+
+		// Bottom Face
+		12, 13, 14,
+		12, 14, 15,
+
+		// Left Face
+		16, 17, 18,
+		16, 18, 19,
+
+		// Right Face
+		20, 21, 22,
+		20, 22, 23
+	};
 
 	D3D11_BUFFER_DESC indexBufferDesc;
 	ZeroMemory(&indexBufferDesc, sizeof(indexBufferDesc));
@@ -666,6 +707,16 @@ bool InitScene()
 	cbbd.MiscFlags = 0;
 
 	hr = d3d11Device->CreateBuffer(&cbbd, NULL, &cbPerObjectBuffer);
+
+	ZeroMemory(&cbbd, sizeof(D3D11_BUFFER_DESC));
+
+	cbbd.Usage = D3D11_USAGE_DEFAULT;
+	cbbd.ByteWidth = sizeof(cbPerFrame);
+	cbbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	cbbd.CPUAccessFlags = 0;
+	cbbd.MiscFlags = 0;
+
+	hr = d3d11Device->CreateBuffer(&cbbd, NULL, &cbPerFrameBuffer);
 
 	camPosition = XMVectorSet(0.0f, 3.0f, -18.0f, 0.0f);
 	camTarget = XMVectorSet(0.0f, 0.0f, 0.0f, 0.0f);
@@ -753,6 +804,14 @@ void UpdateScene(double time)
 
 	cube1World = Translation * Rotation * Scale;
 
+	XMVECTOR lightVector = XMVectorSet(10.0f, 10.0f, 10.0f, 10.0f);
+
+	lightVector = XMVector3TransformCoord(lightVector, cube1World);
+
+	light.pos.x = XMVectorGetX(lightVector);
+	light.pos.y = XMVectorGetY(lightVector);
+	light.pos.z = XMVectorGetZ(lightVector);
+
 	cube2World = XMMatrixIdentity();
 	Rotation = XMMatrixRotationAxis(rotaxis, -rot);
 	Translation = XMMatrixTranslation(0.0f, 0.0f, 4.0f);
@@ -824,6 +883,7 @@ void RenderText(std::wstring text, int inInt)
 	d3d11DevCon->IASetVertexBuffers(0, 1, &d2dVertBuffer, &stride, &offset);
 
 	WVP = XMMatrixIdentity();
+	cbPerObj.World = XMMatrixTranspose(WVP);
 	cbPerObj.WVP = XMMatrixTranspose(WVP);
 	d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
 	d3d11DevCon->VSSetConstantBuffers(0, 1, &cbPerObjectBuffer);
@@ -841,6 +901,13 @@ void DrawScene()
 	d3d11DevCon->ClearRenderTargetView(renderTargetView, bgColor);
 	d3d11DevCon->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
 	
+	constbuffPerFrame.light = light;
+	d3d11DevCon->UpdateSubresource(cbPerFrameBuffer, 0, NULL, &constbuffPerFrame, 0, 0);
+	d3d11DevCon->PSSetConstantBuffers(0, 1, &cbPerFrameBuffer);
+
+	d3d11DevCon->VSSetShader(VS, 0, 0);
+	d3d11DevCon->PSSetShader(PS, 0, 0);
+
 	d3d11DevCon->RSSetState(NULL);
 
 	d3d11DevCon->RSSetState(noCull);
@@ -886,14 +953,14 @@ void DrawScene()
 	//World = XMMatrixIdentity();
 
 	//WVP = World * camView * camProjection;
-	WVP = cube1World * camView * camProjection;
-
-	cbPerObj.WVP = XMMatrixTranspose(WVP);
-
-	d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
-
 	WVP = cube3World * camView * camProjection;
+	cbPerObj.World = XMMatrixTranspose(cube3World);
 	cbPerObj.WVP = XMMatrixTranspose(WVP);
+
+	//d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
+
+	//WVP = cube3World * camView * camProjection;
+	//cbPerObj.WVP = XMMatrixTranspose(WVP);
 	d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
 	d3d11DevCon->VSSetConstantBuffers(0, 1, &cbPerObjectBuffer);
 	d3d11DevCon->PSSetShaderResources(0, 1, &CubesTexture);
@@ -902,6 +969,7 @@ void DrawScene()
 	d3d11DevCon->DrawIndexed(36, 0, 0);
 
 	WVP = cube1World * camView * camProjection;
+	cbPerObj.World = XMMatrixTranspose(cube1World);
 	cbPerObj.WVP = XMMatrixTranspose(WVP);
 	d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
 	d3d11DevCon->VSSetConstantBuffers(0, 1, &cbPerObjectBuffer);
@@ -909,6 +977,7 @@ void DrawScene()
 	d3d11DevCon->DrawIndexed(36, 0, 0);
 
 	WVP = cube2World * camView * camProjection;
+	cbPerObj.World = XMMatrixTranspose(cube2World);
 	cbPerObj.WVP = XMMatrixTranspose(WVP);
 	d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
 	d3d11DevCon->VSSetConstantBuffers(0, 1, &cbPerObjectBuffer);

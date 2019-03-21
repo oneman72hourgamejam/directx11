@@ -34,6 +34,12 @@ ID3D10Blob* VS_Buffer;
 ID3D10Blob* PS_Buffer;
 ID3D11InputLayout* vertLayout;
 ID3D11Buffer* cbPerObjectBuffer;
+ID3D11RasterizerState* WireFrame;
+ID3D11ShaderResourceView* CubesTexture;
+ID3D11SamplerState* CubesTexSamplerState;
+ID3D11BlendState* Transparency;
+ID3D11RasterizerState* CCWcullMode;
+ID3D11RasterizerState* CWcullMode;
 
 float red = 0.0f;
 float green = 0.0f;
@@ -85,22 +91,23 @@ struct cbPerObject
 
 cbPerObject cbPerObj;
 
-struct Vertex    //Overloaded Vertex Structure
+struct Vertex  
 {
 	Vertex() {}
 	Vertex(float x, float y, float z,
-	float cr, float cg, float cb, float ca)
-		: pos(x, y, z), color(cr, cg, cb, ca) {}
+		float u, float v)
+		: pos(x, y, z), texCoord(u, v) {}
 
 	XMFLOAT3 pos;
-	XMFLOAT4 color;
+	XMFLOAT2 texCoord;
 };
 
 D3D11_INPUT_ELEMENT_DESC layout[] =
 {
 	{ "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
-	{ "COLOR", 0, DXGI_FORMAT_R32G32B32A32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }
+	{ "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
 };
+
 UINT numElements = ARRAYSIZE(layout);
 
 int WINAPI WinMain(HINSTANCE hInstance,
@@ -255,6 +262,8 @@ bool InitializeDirect3d11App(HINSTANCE hInstance)
 	d3d11Device->CreateDepthStencilView(depthStencilBuffer, NULL, &depthStencilView);
 
 	d3d11DevCon->OMSetRenderTargets(1, &renderTargetView, depthStencilView);
+
+	return true;
 }
 
 void CleanUp()
@@ -274,6 +283,10 @@ void CleanUp()
 	depthStencilView->Release();
 	depthStencilBuffer->Release();
 	cbPerObjectBuffer->Release();
+	Transparency->Release();
+	CCWcullMode->Release();
+	CWcullMode->Release();
+	//WireFrame->Release();
 }
 
 bool InitScene()
@@ -300,43 +313,70 @@ bool InitScene()
 		0, 2, 3,
 	};*/
 
-	Vertex v[] =
-	{
-		Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 0.0f, 0.0f, 1.0f),
-		Vertex(-1.0f, +1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 1.0f),
-		Vertex(+1.0f, +1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f),
-		Vertex(+1.0f, -1.0f, -1.0f, 1.0f, 1.0f, 0.0f, 1.0f),
-		Vertex(-1.0f, -1.0f, +1.0f, 0.0f, 1.0f, 1.0f, 1.0f),
-		Vertex(-1.0f, +1.0f, +1.0f, 1.0f, 1.0f, 1.0f, 1.0f),
-		Vertex(+1.0f, +1.0f, +1.0f, 1.0f, 0.0f, 1.0f, 1.0f),
-		Vertex(+1.0f, -1.0f, +1.0f, 1.0f, 0.0f, 0.0f, 1.0f),
-	};
-
-	DWORD indices[] = {
-		// front face
-		0, 1, 2,
-		0, 2, 3,
-
-		// back face
-		4, 6, 5,
-		4, 7, 6,
-
-		// left face
-		4, 5, 1,
-		4, 1, 0,
-
-		// right face
-		3, 2, 6,
-		3, 6, 7,
-
-		// top face
-		1, 5, 6,
-		1, 6, 2,
-
-		// bottom face
-		4, 0, 3,
-		4, 3, 7
-	};
+	 Vertex v[] =
+        {
+            // Front Face
+            Vertex(-1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
+            Vertex(-1.0f,  1.0f, -1.0f, 0.0f, 0.0f),
+            Vertex( 1.0f,  1.0f, -1.0f, 1.0f, 0.0f),
+            Vertex( 1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
+    
+            // Back Face
+            Vertex(-1.0f, -1.0f, 1.0f, 1.0f, 1.0f),
+            Vertex( 1.0f, -1.0f, 1.0f, 0.0f, 1.0f),
+            Vertex( 1.0f,  1.0f, 1.0f, 0.0f, 0.0f),
+            Vertex(-1.0f,  1.0f, 1.0f, 1.0f, 0.0f),
+    
+            // Top Face
+            Vertex(-1.0f, 1.0f, -1.0f, 0.0f, 1.0f),
+            Vertex(-1.0f, 1.0f,  1.0f, 0.0f, 0.0f),
+            Vertex( 1.0f, 1.0f,  1.0f, 1.0f, 0.0f),
+            Vertex( 1.0f, 1.0f, -1.0f, 1.0f, 1.0f),
+    
+            // Bottom Face
+            Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
+            Vertex( 1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
+            Vertex( 1.0f, -1.0f,  1.0f, 0.0f, 0.0f),
+            Vertex(-1.0f, -1.0f,  1.0f, 1.0f, 0.0f),
+    
+            // Left Face
+            Vertex(-1.0f, -1.0f,  1.0f, 0.0f, 1.0f),
+            Vertex(-1.0f,  1.0f,  1.0f, 0.0f, 0.0f),
+            Vertex(-1.0f,  1.0f, -1.0f, 1.0f, 0.0f),
+            Vertex(-1.0f, -1.0f, -1.0f, 1.0f, 1.0f),
+    
+            // Right Face
+            Vertex( 1.0f, -1.0f, -1.0f, 0.0f, 1.0f),
+            Vertex( 1.0f,  1.0f, -1.0f, 0.0f, 0.0f),
+            Vertex( 1.0f,  1.0f,  1.0f, 1.0f, 0.0f),
+            Vertex( 1.0f, -1.0f,  1.0f, 1.0f, 1.0f),
+        };
+    
+        DWORD indices[] = {
+            // Front Face
+            0,  1,  2,
+            0,  2,  3,
+    
+            // Back Face
+            4,  5,  6,
+            4,  6,  7,
+    
+            // Top Face
+            8,  9, 10,
+            8, 10, 11,
+    
+            // Bottom Face
+            12, 13, 14,
+            12, 14, 15,
+    
+            // Left Face
+            16, 17, 18,
+            16, 18, 19,
+    
+            // Right Face
+            20, 21, 22,
+            20, 22, 23
+        };
 
 	D3D11_BUFFER_DESC indexBufferDesc;
 	ZeroMemory(&indexBufferDesc, sizeof(indexBufferDesc));
@@ -351,12 +391,13 @@ bool InitScene()
 
 	iinitData.pSysMem = indices;
 	d3d11Device->CreateBuffer(&indexBufferDesc, &iinitData, &squareIndexBuffer);
+	d3d11DevCon->IASetIndexBuffer(squareIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 
 	D3D11_BUFFER_DESC vertexBufferDesc;
 	ZeroMemory(&vertexBufferDesc, sizeof(vertexBufferDesc));
 
 	vertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
-	vertexBufferDesc.ByteWidth = sizeof(Vertex) * 8;
+	vertexBufferDesc.ByteWidth = sizeof(Vertex) * 24;
 	vertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
 	vertexBufferDesc.CPUAccessFlags = 0;
 	vertexBufferDesc.MiscFlags = 0;
@@ -366,7 +407,6 @@ bool InitScene()
 	ZeroMemory(&vertexBufferData, sizeof(vertexBufferData));
 	vertexBufferData.pSysMem = v;
 
-	d3d11DevCon->IASetIndexBuffer(squareIndexBuffer, DXGI_FORMAT_R32_UINT, 0);
 	hr = d3d11Device->CreateBuffer(&vertexBufferDesc, &vertexBufferData, &squareVertBuffer);
 
 	UINT stride = sizeof(Vertex);
@@ -411,6 +451,57 @@ bool InitScene()
 	camView = XMMatrixLookAtLH(camPosition, camTarget, camUp);
 
 	camProjection = XMMatrixPerspectiveFovLH(0.4f*3.14f, (float)Width / Height, 1.0f, 1000.0f);
+
+	hr = D3DX11CreateShaderResourceViewFromFile(d3d11Device, "adf.jpg",
+		NULL, NULL, &CubesTexture, NULL);
+
+	D3D11_SAMPLER_DESC sampDesc;
+	ZeroMemory(&sampDesc, sizeof(sampDesc));
+	sampDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+	sampDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+	sampDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+	sampDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+	sampDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+	sampDesc.MinLOD = 0;
+	sampDesc.MaxLOD = D3D11_FLOAT32_MAX;
+
+	//Create the Sample State
+	hr = d3d11Device->CreateSamplerState(&sampDesc, &CubesTexSamplerState);
+
+	D3D11_BLEND_DESC blendDesc;
+	ZeroMemory(&blendDesc, sizeof(blendDesc));
+
+	D3D11_RENDER_TARGET_BLEND_DESC rtbd;
+	ZeroMemory(&rtbd, sizeof(rtbd));
+
+	rtbd.BlendEnable = true;
+	rtbd.SrcBlend = D3D11_BLEND_SRC_COLOR;
+	rtbd.DestBlend = D3D11_BLEND_BLEND_FACTOR;
+	rtbd.BlendOp = D3D11_BLEND_OP_ADD;
+	rtbd.SrcBlendAlpha = D3D11_BLEND_ONE;
+	rtbd.DestBlendAlpha = D3D11_BLEND_ZERO;
+	rtbd.BlendOpAlpha = D3D11_BLEND_OP_ADD;
+	rtbd.RenderTargetWriteMask = D3D10_COLOR_WRITE_ENABLE_ALL;
+
+	blendDesc.AlphaToCoverageEnable = false;
+	blendDesc.RenderTarget[0] = rtbd;
+
+	d3d11Device->CreateBlendState(&blendDesc, &Transparency);
+
+	D3D11_RASTERIZER_DESC wfdesc;
+
+	ZeroMemory(&wfdesc, sizeof(D3D11_RASTERIZER_DESC));
+	wfdesc.FillMode = D3D11_FILL_SOLID;
+	wfdesc.CullMode = D3D11_CULL_NONE;
+	wfdesc.FrontCounterClockwise = true;
+	hr = d3d11Device->CreateRasterizerState(&wfdesc, &CCWcullMode);
+
+	wfdesc.FrontCounterClockwise = false;
+	hr = d3d11Device->CreateRasterizerState(&wfdesc, &CWcullMode);
+	//hr = d3d11Device->CreateRasterizerState(&wfdesc, &WireFrame);
+
+	//d3d11DevCon->RSSetState(WireFrame);
+
 	return true;
 }
 
@@ -466,9 +557,44 @@ void DrawScene()
 
 	d3d11DevCon->ClearRenderTargetView(renderTargetView, bgColor);
 	d3d11DevCon->ClearDepthStencilView(depthStencilView, D3D11_CLEAR_DEPTH | D3D11_CLEAR_STENCIL, 1.0f, 0);
-	World = XMMatrixIdentity();
+	
+	float blendFactor[] = { 1.0f, 0.1f, 1.0f, 1.0f };
 
-	WVP = World * camView * camProjection;
+	d3d11DevCon->OMSetBlendState(0, 0, 0xffffffff);
+
+	d3d11DevCon->OMSetBlendState(Transparency, blendFactor, 0xffffffff);
+
+	XMVECTOR cubePos = XMVectorZero();
+
+	cubePos = XMVector3TransformCoord(cubePos, cube1World);
+
+	float distX = XMVectorGetX(cubePos) - XMVectorGetX(camPosition);
+	float distY = XMVectorGetY(cubePos) - XMVectorGetY(camPosition);
+	float distZ = XMVectorGetZ(cubePos) - XMVectorGetZ(camPosition);
+
+	float cube1Dist = distX * distX + distY * distY + distZ * distZ;
+
+	cubePos = XMVectorZero();
+
+	cubePos = XMVector3TransformCoord(cubePos, cube2World);
+
+	distX = XMVectorGetX(cubePos) - XMVectorGetX(camPosition);
+	distY = XMVectorGetY(cubePos) - XMVectorGetY(camPosition);
+	distZ = XMVectorGetZ(cubePos) - XMVectorGetZ(camPosition);
+
+	float cube2Dist = distX * distX + distY * distY + distZ * distZ;
+
+	if (cube1Dist < cube2Dist)
+	{
+		XMMATRIX tempMatrix = cube1World;
+		cube1World = cube2World;
+		cube2World = tempMatrix;
+	}
+
+	//World = XMMatrixIdentity();
+
+	//WVP = World * camView * camProjection;
+	WVP = cube1World * camView * camProjection;
 
 	cbPerObj.WVP = XMMatrixTranspose(WVP);
 
@@ -478,6 +604,9 @@ void DrawScene()
 	cbPerObj.WVP = XMMatrixTranspose(WVP);
 	d3d11DevCon->UpdateSubresource(cbPerObjectBuffer, 0, NULL, &cbPerObj, 0, 0);
 	d3d11DevCon->VSSetConstantBuffers(0, 1, &cbPerObjectBuffer);
+	d3d11DevCon->PSSetShaderResources(0, 1, &CubesTexture);
+	d3d11DevCon->PSSetSamplers(0, 1, &CubesTexSamplerState);
+	d3d11DevCon->RSSetState(CCWcullMode);
 	d3d11DevCon->DrawIndexed(36, 0, 0);
 
 	WVP = cube1World * camView * camProjection;
@@ -535,6 +664,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg,
 				{
 					DestroyWindow(hwnd);
 				}
+
 
 				return 0;
 			}

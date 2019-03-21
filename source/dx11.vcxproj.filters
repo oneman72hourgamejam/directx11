@@ -24,4 +24,12 @@
       <Filter>Resource Files</Filter>
     </FxCompile>
   </ItemGroup>
+  <ItemGroup>
+    <Image Include="adf.jpg">
+      <Filter>Resource Files</Filter>
+    </Image>
+    <Image Include="adf.png">
+      <Filter>Resource Files</Filter>
+    </Image>
+  </ItemGroup>
 </Project>
